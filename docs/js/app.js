@@ -319,6 +319,16 @@ document.addEventListener("keydown", (e) => {
 // ── Start ──────────────────────────────────────────────────────
 
 init().catch((err) => {
-  loadingStatus.textContent = `Error: ${err.message}`;
   console.error(err);
+  loadingStatus.innerHTML =
+    `<strong>Error:</strong> ${err.message}<br><br>` +
+    `<strong>Troubleshooting:</strong><br>` +
+    `1. <strong>Restart your browser</strong> (close ALL windows, then reopen)<br>` +
+    `2. Enable Hardware Acceleration: <code>chrome://settings/system</code><br>` +
+    `3. Check WebGL status: <code>chrome://gpu</code><br>` +
+    `4. Try a different browser (Chrome, Edge, or Firefox)`;
+  loadingStatus.style.textAlign = "left";
+  loadingStatus.style.fontSize = "0.9rem";
+  loadingStatus.style.maxWidth = "500px";
+  document.querySelector(".spinner").style.display = "none";
 });

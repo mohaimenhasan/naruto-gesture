@@ -14,16 +14,6 @@ const NO_FACE = { leftEye: null, rightEye: null, eyesClosed: false };
 let _vision = null;
 
 export async function initVision(onStatus) {
-  // Verify WebGL2 works before loading heavy models
-  const testCanvas = document.createElement("canvas");
-  const gl = testCanvas.getContext("webgl2") || testCanvas.getContext("webgl");
-  if (!gl) {
-    throw new Error(
-      "WebGL is not available in this browser. Please use a recent version of Chrome, Edge, or Firefox on desktop."
-    );
-  }
-  testCanvas.remove();
-
   onStatus?.("Downloading MediaPipe WASM runtime…");
   _vision = await FilesetResolver.forVisionTasks(WASM_PATH);
   return _vision;
@@ -60,18 +50,28 @@ export class HandCapture {
 
   async init(onStatus) {
     onStatus?.("Loading hand detection model…");
-    this.landmarker = await HandLandmarker.createFromOptions(_vision, {
+    const opts = {
       baseOptions: {
         modelAssetPath:
           "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
-        delegate: "GPU",
       },
       runningMode: "VIDEO",
       numHands: 1,
       minHandDetectionConfidence: 0.7,
       minTrackingConfidence: 0.5,
-    });
-    console.log("HandLandmarker ready");
+    };
+    // Try GPU first, then CPU
+    for (const delegate of ["GPU", "CPU"]) {
+      try {
+        opts.baseOptions.delegate = delegate;
+        this.landmarker = await HandLandmarker.createFromOptions(_vision, opts);
+        console.log(`HandLandmarker ready (${delegate})`);
+        return;
+      } catch (e) {
+        console.warn(`HandLandmarker ${delegate} init failed:`, e.message);
+      }
+    }
+    throw new Error("Hand model failed to load. See troubleshooting below.");
   }
 
   detect(frameCanvas, timestampMs) {
@@ -99,18 +99,27 @@ export class FaceCapture {
 
   async init(onStatus) {
     onStatus?.("Loading face detection model…");
-    this.landmarker = await FaceLandmarker.createFromOptions(_vision, {
+    const opts = {
       baseOptions: {
         modelAssetPath:
           "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task",
-        delegate: "GPU",
       },
       runningMode: "VIDEO",
       numFaces: 1,
       minFaceDetectionConfidence: 0.7,
       minTrackingConfidence: 0.5,
-    });
-    console.log("FaceLandmarker ready");
+    };
+    for (const delegate of ["GPU", "CPU"]) {
+      try {
+        opts.baseOptions.delegate = delegate;
+        this.landmarker = await FaceLandmarker.createFromOptions(_vision, opts);
+        console.log(`FaceLandmarker ready (${delegate})`);
+        return;
+      } catch (e) {
+        console.warn(`FaceLandmarker ${delegate} init failed:`, e.message);
+      }
+    }
+    throw new Error("Face model failed to load. See troubleshooting below.");
   }
 
   getEyePositions(frameCanvas, timestampMs) {
