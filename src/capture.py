@@ -67,8 +67,7 @@ class HandCapture:
                     cv2.circle(frame, (px, py), 3, (0, 255, 0), -1)
 
                 for conn in hand_connections:
-                    start_idx, end_idx = conn
-                    cv2.line(frame, points[start_idx], points[end_idx], (0, 255, 0), 2)
+                    cv2.line(frame, points[conn.start], points[conn.end], (0, 255, 0), 2)
 
         return frame
 
