@@ -5,28 +5,49 @@
 const NO_FACE = { leftEye: null, rightEye: null, eyesClosed: false };
 
 export async function initVision(onStatus) {
-  onStatus?.("Initializing AI runtime (WASM)…");
+  onStatus?.("Initializing AI runtime…");
   const tf = window.tf;
   if (!tf) throw new Error("TensorFlow.js failed to load. Please refresh the page.");
 
-  // Disable multi-threading (requires SharedArrayBuffer + cross-origin
-  // isolation headers that GitHub Pages doesn't provide)
-  tf.wasm.setThreadsCount(1);
+  // Try backends in order: WebGL → WASM (no SIMD/threads) → error
+  // TF.js WebGL is more robust than MediaPipe's internal WebGL.
+  const backends = [
+    {
+      name: "webgl",
+      setup: () => {},
+    },
+    {
+      name: "wasm",
+      setup: () => {
+        tf.env().set("WASM_HAS_SIMD_SUPPORT", false);
+        tf.env().set("WASM_HAS_MULTITHREAD_SUPPORT", false);
+        tf.wasm.setThreadsCount(1);
+        tf.wasm.setWasmPaths(
+          "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@4.22.0/wasm-out/"
+        );
+      },
+    },
+  ];
 
-  tf.wasm.setWasmPaths(
-    "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@4.22.0/wasm-out/"
-  );
-
-  // Try WASM → fall back to plain CPU if WASM SIMD crashes
-  try {
-    await tf.setBackend("wasm");
-    await tf.ready();
-  } catch (e) {
-    console.warn("WASM backend failed, trying CPU:", e);
-    await tf.setBackend("cpu");
-    await tf.ready();
+  for (const backend of backends) {
+    try {
+      backend.setup();
+      await tf.setBackend(backend.name);
+      await tf.ready();
+      // Quick smoke test — create and dispose a tensor
+      const test = tf.tensor([1, 2, 3]);
+      test.dispose();
+      console.log(`TF.js ready — backend: ${backend.name}, v${tf.version_core}`);
+      onStatus?.(`AI runtime ready (${backend.name})`);
+      return;
+    } catch (e) {
+      console.warn(`${backend.name} backend failed:`, e.message);
+    }
   }
-  console.log(`TF.js ready — backend: ${tf.getBackend()}, v${tf.version_core}`);
+
+  throw new Error(
+    "Could not initialize any AI backend. Please try Chrome or Edge with hardware acceleration enabled."
+  );
 }
 
 export class HandCapture {
