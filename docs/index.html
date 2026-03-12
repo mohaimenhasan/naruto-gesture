@@ -32,12 +32,12 @@
     <p><strong>ESC</strong> → Quit</p>
   </div>
 
-  <!-- TensorFlow.js (WASM backend — NO WebGL required) -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@4"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection"></script>
+  <!-- TensorFlow.js — pinned versions for compatibility -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.22.0/dist/tf-core.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.22.0/dist/tf-converter.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@4.22.0/dist/tf-backend-wasm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection/dist/hand-pose-detection.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection/dist/face-landmarks-detection.js"></script>
 
   <script type="module" src="js/app.js"></script>
 </body>

@@ -9,11 +9,23 @@ export async function initVision(onStatus) {
   const tf = window.tf;
   if (!tf) throw new Error("TensorFlow.js failed to load. Please refresh the page.");
 
+  // Disable multi-threading (requires SharedArrayBuffer + cross-origin
+  // isolation headers that GitHub Pages doesn't provide)
+  tf.wasm.setThreadsCount(1);
+
   tf.wasm.setWasmPaths(
-    `https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@${tf.version_core}/wasm-out/`
+    "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@4.22.0/wasm-out/"
   );
-  await tf.setBackend("wasm");
-  await tf.ready();
+
+  // Try WASM → fall back to plain CPU if WASM SIMD crashes
+  try {
+    await tf.setBackend("wasm");
+    await tf.ready();
+  } catch (e) {
+    console.warn("WASM backend failed, trying CPU:", e);
+    await tf.setBackend("cpu");
+    await tf.ready();
+  }
   console.log(`TF.js ready — backend: ${tf.getBackend()}, v${tf.version_core}`);
 }
 
@@ -35,7 +47,7 @@ export class HandCapture {
   async detect(video) {
     if (!this._detector) return null;
     try {
-      const hands = await this._detector.estimateHands(video);
+      const hands = await this._detector.estimateHands(video, { flipHorizontal: false });
       if (!hands || hands.length === 0) return null;
       const w = video.videoWidth;
       const h = video.videoHeight;
@@ -76,7 +88,7 @@ export class FaceCapture {
     if (!this._detector) return NO_FACE;
     let faces;
     try {
-      faces = await this._detector.estimateFaces(video);
+      faces = await this._detector.estimateFaces(video, { flipHorizontal: false });
     } catch (e) {
       console.warn("Face detection error:", e);
       return NO_FACE;
