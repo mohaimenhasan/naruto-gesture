@@ -94,17 +94,24 @@ function dist3d(a, b) {
 // ─── Main loop ─────────────────────────────────────────────────
 
 let lastTimestamp = 0;
+let processing = false;
 
 function loop(timestamp) {
   requestAnimationFrame(loop);
 
-  // Throttle to ~30 fps to match Python version behavior
+  // Throttle to ~30 fps
   if (timestamp - lastTimestamp < 33) return;
   lastTimestamp = timestamp;
 
+  // Skip if previous frame is still processing (async detection)
+  if (processing) return;
+  processing = true;
+  processFrame().finally(() => { processing = false; });
+}
+
+async function processFrame() {
   const w = canvas.width;
   const h = canvas.height;
-  const now = performance.now();
 
   // Draw mirrored video
   ctx.save();
@@ -115,7 +122,7 @@ function loop(timestamp) {
 
   // ── Face tracking + blink detection ──────────────────────
 
-  const faceResult = faceCapture.getEyePositions(video, now);
+  const faceResult = await faceCapture.getEyePositions(video);
   let { leftEye, rightEye, eyesClosed } = faceResult;
 
   // Mirror the eye positions since we flipped the video
@@ -160,14 +167,15 @@ function loop(timestamp) {
 
   // ── Hand detection: open palm triggers Rasengan ──────────
 
-  const handResult = handCapture.detect(video, now);
+  const handResult = await handCapture.detect(video);
   let palmDetected = false;
   let rasenganPos = null;
   let fingersOpen = 0;
   let thumbOpen = false;
 
-  if (handResult && handResult.landmarks && handResult.landmarks.length > 0) {
-    const lm = handResult.landmarks[0]; // array of {x, y, z}
+  const handLandmarks = handResult && handResult.multiHandLandmarks;
+  if (handLandmarks && handLandmarks.length > 0) {
+    const lm = handLandmarks[0]; // array of {x, y, z}
     const wrist = lm[0];
 
     const tipIds = [8, 12, 16, 20];
