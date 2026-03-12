@@ -67,12 +67,13 @@ export class HandCapture {
 
   async detect(video) {
     if (!this._detector) return null;
+    const tf = window.tf;
+    const input = tf.browser.fromPixels(video).toFloat();
     try {
-      const hands = await this._detector.estimateHands(video, { flipHorizontal: false });
+      const hands = await this._detector.estimateHands(input, { flipHorizontal: false });
       if (!hands || hands.length === 0) return null;
       const w = video.videoWidth;
       const h = video.videoHeight;
-      // Normalize to 0-1 coords so app.js gesture logic works unchanged
       const landmarks = hands.map((hand) =>
         hand.keypoints.map((kp, i) => ({
           x: kp.x / w,
@@ -84,6 +85,8 @@ export class HandCapture {
     } catch (e) {
       console.warn("Hand detection error:", e);
       return null;
+    } finally {
+      input.dispose();
     }
   }
 }
@@ -107,12 +110,16 @@ export class FaceCapture {
 
   async getEyePositions(video) {
     if (!this._detector) return NO_FACE;
+    const tf = window.tf;
+    const input = tf.browser.fromPixels(video).toFloat();
     let faces;
     try {
-      faces = await this._detector.estimateFaces(video, { flipHorizontal: false });
+      faces = await this._detector.estimateFaces(input, { flipHorizontal: false });
     } catch (e) {
       console.warn("Face detection error:", e);
       return NO_FACE;
+    } finally {
+      input.dispose();
     }
     if (!faces || faces.length === 0) return NO_FACE;
 
