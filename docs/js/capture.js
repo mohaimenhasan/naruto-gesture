@@ -1,41 +1,42 @@
 import { FilesetResolver, HandLandmarker, FaceLandmarker } from
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/vision_bundle.mjs";
 
+const WASM_PATH = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm";
+const NO_FACE = { leftEye: null, rightEye: null, eyesClosed: false };
+
 export class HandCapture {
   constructor() {
     this.landmarker = null;
+    this._lastTs = -1;
   }
 
   async init() {
-    const vision = await FilesetResolver.forVisionTasks(
-      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm"
-    );
-    // Try GPU first, fall back to CPU if WebGL isn't available
-    for (const delegate of ["GPU", "CPU"]) {
-      try {
-        this.landmarker = await HandLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath:
-              "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
-            delegate,
-          },
-          runningMode: "VIDEO",
-          numHands: 1,
-          minHandDetectionConfidence: 0.7,
-          minTrackingConfidence: 0.5,
-        });
-        console.log(`HandLandmarker using ${delegate} delegate`);
-        return;
-      } catch (e) {
-        console.warn(`HandLandmarker ${delegate} failed, trying next…`, e);
-      }
-    }
-    throw new Error("Could not initialize HandLandmarker on GPU or CPU");
+    const vision = await FilesetResolver.forVisionTasks(WASM_PATH);
+    this.landmarker = await HandLandmarker.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath:
+          "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
+        delegate: "CPU",
+      },
+      runningMode: "VIDEO",
+      numHands: 1,
+      minHandDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.5,
+    });
+    console.log("HandLandmarker ready (CPU)");
   }
 
   detect(video, timestampMs) {
     if (!this.landmarker) return null;
-    return this.landmarker.detectForVideo(video, timestampMs);
+    // MediaPipe requires strictly increasing timestamps
+    const ts = Math.max(Math.round(timestampMs), this._lastTs + 1);
+    this._lastTs = ts;
+    try {
+      return this.landmarker.detectForVideo(video, ts);
+    } catch (e) {
+      console.warn("Hand detection frame error:", e);
+      return null;
+    }
   }
 }
 
@@ -44,40 +45,42 @@ export class FaceCapture {
     this.landmarker = null;
     this.earThreshold = 0.30;
     this._lastEar = 0;
+    this._lastTs = -1;
   }
 
   async init() {
-    const vision = await FilesetResolver.forVisionTasks(
-      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm"
-    );
-    for (const delegate of ["GPU", "CPU"]) {
-      try {
-        this.landmarker = await FaceLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath:
-              "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task",
-            delegate,
-          },
-          runningMode: "VIDEO",
-          numFaces: 1,
-          minFaceDetectionConfidence: 0.7,
-          minTrackingConfidence: 0.5,
-        });
-        console.log(`FaceLandmarker using ${delegate} delegate`);
-        return;
-      } catch (e) {
-        console.warn(`FaceLandmarker ${delegate} failed, trying next…`, e);
-      }
-    }
-    throw new Error("Could not initialize FaceLandmarker on GPU or CPU");
+    // Use a separate FilesetResolver to avoid sharing WebGL state with HandCapture
+    const vision = await FilesetResolver.forVisionTasks(WASM_PATH);
+    this.landmarker = await FaceLandmarker.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath:
+          "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task",
+        delegate: "CPU",
+      },
+      runningMode: "VIDEO",
+      numFaces: 1,
+      minFaceDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.5,
+    });
+    console.log("FaceLandmarker ready (CPU)");
   }
 
   getEyePositions(video, timestampMs) {
-    if (!this.landmarker) return { leftEye: null, rightEye: null, eyesClosed: false };
+    if (!this.landmarker) return NO_FACE;
 
-    const result = this.landmarker.detectForVideo(video, timestampMs);
+    const ts = Math.max(Math.round(timestampMs), this._lastTs + 1);
+    this._lastTs = ts;
+
+    let result;
+    try {
+      result = this.landmarker.detectForVideo(video, ts);
+    } catch (e) {
+      console.warn("Face detection frame error:", e);
+      return NO_FACE;
+    }
+
     if (!result.faceLandmarks || result.faceLandmarks.length === 0) {
-      return { leftEye: null, rightEye: null, eyesClosed: false };
+      return NO_FACE;
     }
 
     const face = result.faceLandmarks[0];
