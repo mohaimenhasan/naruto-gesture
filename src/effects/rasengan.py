@@ -15,7 +15,7 @@ class RasenganEffect:
         self.core_pulse = 0
         self.activation_time = 0
         self.hand_pos = (screen_width // 2, screen_height // 2)
-        self.base_radius = 60
+        self.base_radius = 150
 
     def update(self, hand_position=None):
         """Update effect state each frame."""

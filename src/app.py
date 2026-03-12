@@ -92,7 +92,7 @@ def run_battle_mode():
 
     hand_capture = HandCapture()
     face_capture = FaceCapture()
-    classifier = GestureClassifier(confidence_threshold=0.65)
+    classifier = GestureClassifier(confidence_threshold=0.80)
 
     if classifier.model is None:
         print("No trained model. Run training mode first: python -m src.app --mode train")
@@ -111,15 +111,22 @@ def run_battle_mode():
     rasengan = RasenganEffect(screen_w, screen_h)
 
     active_jutsu = None
+    sharingan_active = False
     jutsu_cooldown = 0
-    COOLDOWN_FRAMES = 10
+    COOLDOWN_FRAMES = 15
     DEACTIVATE_FRAMES = 30
     no_gesture_count = 0
 
-    font = pygame.font.Font(None, 36)
+    # Blink detection state for Sharingan toggle
+    eyes_closed_frames = 0
+    BLINK_HOLD_FRAMES = 60  # ~2 seconds at 30fps
+    eyes_were_held = False
+    sharingan_cooldown = 0
+    frame_count = 0
 
     print("\n=== BATTLE MODE ===")
     print("Perform gestures to activate jutsus!")
+    print("Close eyes 3s + reopen → toggle Sharingan")
     print("Press [Q] or [ESC] to quit\n")
 
     running = True
@@ -137,7 +144,41 @@ def run_battle_mode():
 
         frame = cv2.flip(frame, 1)
 
-        # Detect gesture
+        # Face tracking (needed for both blink detection and Sharingan overlay)
+        eye_data = face_capture.get_eye_positions(frame)
+        left_eye, right_eye, eyes_closed = eye_data
+
+        # Debug: print face/blink state every 30 frames (~1/sec)
+        if frame_count % 30 == 0:
+            if left_eye is None:
+                print(f"  [DEBUG] No face detected")
+            else:
+                ear = getattr(face_capture, '_last_ear', -1)
+                nlm = getattr(face_capture, '_num_landmarks', 0)
+                print(f"  [DEBUG] Face OK ({nlm} landmarks) | EAR: {ear:.4f} | Closed: {eyes_closed} | Hold: {eyes_closed_frames}/{BLINK_HOLD_FRAMES}")
+        frame_count += 1
+
+        # Blink-to-toggle Sharingan: hold eyes closed 3s, then reopen
+        if sharingan_cooldown > 0:
+            sharingan_cooldown -= 1
+
+        if eyes_closed:
+            eyes_closed_frames += 1
+            if eyes_closed_frames >= BLINK_HOLD_FRAMES:
+                eyes_were_held = True
+        else:
+            if eyes_were_held and sharingan_cooldown <= 0:
+                sharingan_active = not sharingan_active
+                sharingan_cooldown = 60  # 2s cooldown to prevent rapid toggling
+                if sharingan_active:
+                    sharingan.reset()
+                    print("  SHARINGAN ACTIVATED!")
+                else:
+                    print("  Sharingan deactivated")
+            eyes_closed_frames = 0
+            eyes_were_held = False
+
+        # Detect hand gesture for Chidori/Rasengan
         hands_data, hand_results = hand_capture.extract_landmarks(frame)
         gesture = None
         confidence = 0.0
@@ -147,70 +188,92 @@ def run_battle_mode():
 
         if gesture:
             no_gesture_count = 0
-            if gesture != active_jutsu:
-                active_jutsu = gesture
-                jutsu_cooldown = COOLDOWN_FRAMES
-                sharingan.reset()
-                chidori.reset()
-                rasengan.reset()
+            jutsu_cooldown = COOLDOWN_FRAMES
+            if gesture != "sharingan":
+                if gesture != active_jutsu:
+                    active_jutsu = gesture
+                    chidori.reset()
+                    rasengan.reset()
         else:
             no_gesture_count += 1
-            if no_gesture_count > DEACTIVATE_FRAMES:
+            if no_gesture_count > DEACTIVATE_FRAMES and active_jutsu:
                 active_jutsu = None
-                sharingan.reset()
                 chidori.reset()
                 rasengan.reset()
 
         jutsu_cooldown = max(0, jutsu_cooldown - 1)
 
-        # Render based on active jutsu
-        if active_jutsu == "sharingan":
-            eye_data = face_capture.get_eye_positions(frame)
-            if eye_data[0] is not None:
-                rendered = sharingan.render(frame, eye_data)
-            else:
-                rendered = frame
-            # Convert OpenCV frame to Pygame surface
-            surface = cv2_frame_to_pygame(rendered, (screen_w, screen_h))
-            screen.blit(surface, (0, 0))
+        # Always start with camera feed, then layer effects on top
+        rendered_frame = frame.copy()
 
-        elif active_jutsu in ("chidori", "rasengan"):
-            # Show camera feed as background
-            surface = cv2_frame_to_pygame(frame, (screen_w, screen_h))
-            screen.blit(surface, (0, 0))
+        # Sharingan persists independently — overlay on eyes
+        if sharingan_active and left_eye is not None:
+            rendered_frame = sharingan.render(rendered_frame, (left_eye, right_eye))
 
-            # Dark overlay for effect visibility
+        # Convert camera frame (with possible sharingan) to pygame surface
+        surface = cv2_frame_to_pygame(rendered_frame, (screen_w, screen_h))
+        screen.blit(surface, (0, 0))
+
+        # Layer Chidori/Rasengan on top
+        if active_jutsu in ("chidori", "rasengan"):
             dark = pygame.Surface((screen_w, screen_h), pygame.SRCALPHA)
             dark.fill((0, 0, 0, 120))
             screen.blit(dark, (0, 0))
 
-            # Get hand position for effect centering
-            hand_pos = None
+            # Get hand landmark positions for effect placement
+            chidori_pos = None
+            rasengan_pos = None
             if hand_results.hand_landmarks:
                 h_lm = hand_results.hand_landmarks[0]
-                hand_pos = (
-                    int(h_lm[9].x * screen_w),
-                    int(h_lm[9].y * screen_h),
+                # Chidori at fingertip (landmark 12 = middle finger tip)
+                chidori_pos = (
+                    int(h_lm[12].x * screen_w),
+                    int(h_lm[12].y * screen_h),
+                )
+                # Rasengan hovering above open palm
+                # Average of wrist (0) and middle finger base (9) gives palm center,
+                # then offset slightly toward fingertips
+                palm_x = (h_lm[0].x + h_lm[9].x + h_lm[5].x + h_lm[17].x) / 4
+                palm_y = (h_lm[0].y + h_lm[9].y + h_lm[5].y + h_lm[17].y) / 4
+                rasengan_pos = (
+                    int(palm_x * screen_w),
+                    int(palm_y * screen_h),
                 )
 
             if active_jutsu == "chidori":
-                chidori.update(hand_pos)
+                chidori.update(chidori_pos)
                 chidori.render(screen)
             else:
-                rasengan.update(hand_pos)
+                rasengan.update(rasengan_pos)
                 rasengan.render(screen)
-        else:
-            # No active jutsu — just show camera feed
-            surface = cv2_frame_to_pygame(frame, (screen_w, screen_h))
-            screen.blit(surface, (0, 0))
 
         # HUD overlay
-        if active_jutsu:
-            jutsu_text = font.render(f"JUTSU: {active_jutsu.upper()}", True, (255, 255, 0))
-            screen.blit(jutsu_text, (20, 20))
+        hud_lines = []
+        if eyes_closed and eyes_closed_frames > 0:
+            progress = min(eyes_closed_frames / BLINK_HOLD_FRAMES * 100, 100)
+            hud_lines.append(f"SHARINGAN CHARGING: {progress:.0f}%")
+        if sharingan_active:
+            hud_lines.append("SHARINGAN: ACTIVE")
+        if active_jutsu and active_jutsu != "sharingan":
+            hud_lines.append(f"JUTSU: {active_jutsu.upper()}")
         if gesture:
-            conf_text = font.render(f"Confidence: {confidence:.0%}", True, (200, 200, 200))
-            screen.blit(conf_text, (20, 55))
+            hud_lines.append(f"Confidence: {confidence:.0%}")
+
+        if hud_lines:
+            hud = np.zeros((35 * len(hud_lines) + 10, 500, 3), dtype=np.uint8)
+            for i, line in enumerate(hud_lines):
+                if "CHARGING" in line:
+                    color = (0, 165, 255)
+                elif "SHARINGAN" in line:
+                    color = (0, 0, 255)
+                else:
+                    color = (0, 255, 255)
+                cv2.putText(hud, line, (10, 30 + i * 35),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+            hud_rgb = cv2.cvtColor(hud, cv2.COLOR_BGR2RGB)
+            hud_surface = pygame.surfarray.make_surface(hud_rgb.swapaxes(0, 1))
+            hud_surface.set_colorkey((0, 0, 0))
+            screen.blit(hud_surface, (10, 10))
 
         pygame.display.flip()
         clock.tick(30)

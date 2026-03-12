@@ -4,5 +4,4 @@ __pycache__/
 *.pyo
 data/*.csv
 data/*.pkl
-assets/*.task
 .DS_Store

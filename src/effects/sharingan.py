@@ -110,10 +110,11 @@ class SharinganEffect:
         left_eye, right_eye = eye_data
         if left_eye:
             center, radius = left_eye
-            self._overlay_on_frame(frame, self.sharingan_img, center[0], center[1], radius * 2)
+            # Size to pupil/iris only (not entire eye)
+            self._overlay_on_frame(frame, self.sharingan_img, center[0], center[1], int(radius * 0.9))
         if right_eye:
             center, radius = right_eye
-            self._overlay_on_frame(frame, self.sharingan_img, center[0], center[1], radius * 2)
+            self._overlay_on_frame(frame, self.sharingan_img, center[0], center[1], int(radius * 0.9))
 
         # Add red tint to the overall frame
         red_overlay = np.zeros_like(frame)
