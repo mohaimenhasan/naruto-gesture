@@ -10,17 +10,27 @@ export class HandCapture {
     const vision = await FilesetResolver.forVisionTasks(
       "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm"
     );
-    this.landmarker = await HandLandmarker.createFromOptions(vision, {
-      baseOptions: {
-        modelAssetPath:
-          "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
-        delegate: "GPU",
-      },
-      runningMode: "VIDEO",
-      numHands: 1,
-      minHandDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.5,
-    });
+    // Try GPU first, fall back to CPU if WebGL isn't available
+    for (const delegate of ["GPU", "CPU"]) {
+      try {
+        this.landmarker = await HandLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath:
+              "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
+            delegate,
+          },
+          runningMode: "VIDEO",
+          numHands: 1,
+          minHandDetectionConfidence: 0.7,
+          minTrackingConfidence: 0.5,
+        });
+        console.log(`HandLandmarker using ${delegate} delegate`);
+        return;
+      } catch (e) {
+        console.warn(`HandLandmarker ${delegate} failed, trying next…`, e);
+      }
+    }
+    throw new Error("Could not initialize HandLandmarker on GPU or CPU");
   }
 
   detect(video, timestampMs) {
@@ -40,17 +50,26 @@ export class FaceCapture {
     const vision = await FilesetResolver.forVisionTasks(
       "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm"
     );
-    this.landmarker = await FaceLandmarker.createFromOptions(vision, {
-      baseOptions: {
-        modelAssetPath:
-          "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task",
-        delegate: "GPU",
-      },
-      runningMode: "VIDEO",
-      numFaces: 1,
-      minFaceDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.5,
-    });
+    for (const delegate of ["GPU", "CPU"]) {
+      try {
+        this.landmarker = await FaceLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath:
+              "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task",
+            delegate,
+          },
+          runningMode: "VIDEO",
+          numFaces: 1,
+          minFaceDetectionConfidence: 0.7,
+          minTrackingConfidence: 0.5,
+        });
+        console.log(`FaceLandmarker using ${delegate} delegate`);
+        return;
+      } catch (e) {
+        console.warn(`FaceLandmarker ${delegate} failed, trying next…`, e);
+      }
+    }
+    throw new Error("Could not initialize FaceLandmarker on GPU or CPU");
   }
 
   getEyePositions(video, timestampMs) {
