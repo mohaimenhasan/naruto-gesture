@@ -1,85 +1,53 @@
-// MediaPipe Tasks Vision API — single shared WASM/WebGL instance for both
-// hand and face detection.  Frames are captured to an intermediate canvas
-// before being passed to MediaPipe so the video element itself never touches
-// WebGL (avoids driver-level texture-upload bugs).
+// TensorFlow.js with WASM backend — runs entirely on CPU, NO WebGL needed.
+// Uses the same MediaPipe model architectures via TF.js model packages.
+// Globals loaded by <script> tags: tf, handPoseDetection, faceLandmarksDetection
 
-import { FilesetResolver, HandLandmarker, FaceLandmarker } from
-  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
-
-const WASM_PATH =
-  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
 const NO_FACE = { leftEye: null, rightEye: null, eyesClosed: false };
 
-// Shared vision fileset — one WASM module, one WebGL context
-let _vision = null;
-
 export async function initVision(onStatus) {
-  onStatus?.("Downloading MediaPipe WASM runtime…");
-  _vision = await FilesetResolver.forVisionTasks(WASM_PATH);
-  return _vision;
+  onStatus?.("Initializing AI runtime (WASM)…");
+  const tf = window.tf;
+  if (!tf) throw new Error("TensorFlow.js failed to load. Please refresh the page.");
+
+  tf.wasm.setWasmPaths(
+    `https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@${tf.version_core}/wasm-out/`
+  );
+  await tf.setBackend("wasm");
+  await tf.ready();
+  console.log(`TF.js ready — backend: ${tf.getBackend()}, v${tf.version_core}`);
 }
-
-// ─── Temp canvas for frame capture ─────────────────────────────
-// Drawing the video to a plain 2D canvas first, then handing that canvas
-// to MediaPipe avoids the problematic HTMLVideoElement → WebGL texture path
-// that crashes on some browsers/drivers.
-
-let _tmpCanvas = null;
-let _tmpCtx = null;
-
-export function captureFrame(video) {
-  if (!_tmpCanvas) {
-    _tmpCanvas = document.createElement("canvas");
-    _tmpCtx = _tmpCanvas.getContext("2d");
-  }
-  if (_tmpCanvas.width !== video.videoWidth || _tmpCanvas.height !== video.videoHeight) {
-    _tmpCanvas.width = video.videoWidth;
-    _tmpCanvas.height = video.videoHeight;
-  }
-  _tmpCtx.drawImage(video, 0, 0);
-  return _tmpCanvas;
-}
-
-// ─── Hand capture ──────────────────────────────────────────────
 
 export class HandCapture {
   constructor() {
-    this.landmarker = null;
-    this._lastTs = -1;
+    this._detector = null;
   }
 
   async init(onStatus) {
     onStatus?.("Loading hand detection model…");
-    const opts = {
-      baseOptions: {
-        modelAssetPath:
-          "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
-      },
-      runningMode: "VIDEO",
-      numHands: 1,
-      minHandDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.5,
-    };
-    // Try GPU first, then CPU
-    for (const delegate of ["GPU", "CPU"]) {
-      try {
-        opts.baseOptions.delegate = delegate;
-        this.landmarker = await HandLandmarker.createFromOptions(_vision, opts);
-        console.log(`HandLandmarker ready (${delegate})`);
-        return;
-      } catch (e) {
-        console.warn(`HandLandmarker ${delegate} init failed:`, e.message);
-      }
-    }
-    throw new Error("Hand model failed to load. See troubleshooting below.");
+    const hpd = window.handPoseDetection;
+    this._detector = await hpd.createDetector(
+      hpd.SupportedModels.MediaPipeHands,
+      { runtime: "tfjs", maxHands: 1, modelType: "lite" }
+    );
+    console.log("Hand detector ready (TF.js WASM)");
   }
 
-  detect(frameCanvas, timestampMs) {
-    if (!this.landmarker) return null;
-    const ts = Math.max(Math.round(timestampMs), this._lastTs + 1);
-    this._lastTs = ts;
+  async detect(video) {
+    if (!this._detector) return null;
     try {
-      return this.landmarker.detectForVideo(frameCanvas, ts);
+      const hands = await this._detector.estimateHands(video);
+      if (!hands || hands.length === 0) return null;
+      const w = video.videoWidth;
+      const h = video.videoHeight;
+      // Normalize to 0-1 coords so app.js gesture logic works unchanged
+      const landmarks = hands.map((hand) =>
+        hand.keypoints.map((kp, i) => ({
+          x: kp.x / w,
+          y: kp.y / h,
+          z: hand.keypoints3D?.[i]?.z ?? 0,
+        }))
+      );
+      return { landmarks };
     } catch (e) {
       console.warn("Hand detection error:", e);
       return null;
@@ -87,64 +55,38 @@ export class HandCapture {
   }
 }
 
-// ─── Face capture ──────────────────────────────────────────────
-
 export class FaceCapture {
   constructor() {
-    this.landmarker = null;
-    this.earThreshold = 0.30;
+    this._detector = null;
+    this.earThreshold = 0.3;
     this._lastEar = 0;
-    this._lastTs = -1;
   }
 
   async init(onStatus) {
     onStatus?.("Loading face detection model…");
-    const opts = {
-      baseOptions: {
-        modelAssetPath:
-          "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task",
-      },
-      runningMode: "VIDEO",
-      numFaces: 1,
-      minFaceDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.5,
-    };
-    for (const delegate of ["GPU", "CPU"]) {
-      try {
-        opts.baseOptions.delegate = delegate;
-        this.landmarker = await FaceLandmarker.createFromOptions(_vision, opts);
-        console.log(`FaceLandmarker ready (${delegate})`);
-        return;
-      } catch (e) {
-        console.warn(`FaceLandmarker ${delegate} init failed:`, e.message);
-      }
-    }
-    throw new Error("Face model failed to load. See troubleshooting below.");
+    const fld = window.faceLandmarksDetection;
+    this._detector = await fld.createDetector(
+      fld.SupportedModels.MediaPipeFaceMesh,
+      { runtime: "tfjs", maxFaces: 1, refineLandmarks: true }
+    );
+    console.log("Face detector ready (TF.js WASM)");
   }
 
-  getEyePositions(frameCanvas, timestampMs) {
-    if (!this.landmarker) return NO_FACE;
-
-    const ts = Math.max(Math.round(timestampMs), this._lastTs + 1);
-    this._lastTs = ts;
-
-    let result;
+  async getEyePositions(video) {
+    if (!this._detector) return NO_FACE;
+    let faces;
     try {
-      result = this.landmarker.detectForVideo(frameCanvas, ts);
+      faces = await this._detector.estimateFaces(video);
     } catch (e) {
       console.warn("Face detection error:", e);
       return NO_FACE;
     }
+    if (!faces || faces.length === 0) return NO_FACE;
 
-    if (!result.faceLandmarks || result.faceLandmarks.length === 0) {
-      return NO_FACE;
-    }
+    // TF.js keypoints are in pixel coordinates
+    const face = faces[0].keypoints;
 
-    const face = result.faceLandmarks[0];
-    const w = frameCanvas.width;
-    const h = frameCanvas.height;
-
-    // EAR (Eye Aspect Ratio) for blink detection
+    // EAR (Eye Aspect Ratio) — ratio is scale-invariant
     const earMulti = (upper, lower, corners) => {
       let vertSum = 0;
       for (let i = 0; i < upper.length; i++) {
@@ -165,25 +107,24 @@ export class FaceCapture {
     this._lastEar = avgEar;
     const eyesClosed = avgEar < this.earThreshold;
 
+    // Eye centers — already in pixel coords from TF.js
     const eyeCenter = (indices) => {
       let sx = 0, sy = 0;
-      for (const i of indices) {
-        sx += face[i].x * w;
-        sy += face[i].y * h;
-      }
+      for (const i of indices) { sx += face[i].x; sy += face[i].y; }
       return [Math.round(sx / indices.length), Math.round(sy / indices.length)];
     };
 
     const irisRadius = (indices) => {
       let cx = 0, cy = 0;
       for (const i of indices) { cx += face[i].x; cy += face[i].y; }
-      cx /= indices.length; cy /= indices.length;
+      cx /= indices.length;
+      cy /= indices.length;
       let maxDist = 0;
       for (const i of indices) {
         const dx = face[i].x - cx, dy = face[i].y - cy;
         maxDist = Math.max(maxDist, Math.sqrt(dx * dx + dy * dy));
       }
-      return Math.round(maxDist * w * 1.2);
+      return Math.round(maxDist * 1.2);
     };
 
     const LEFT_IRIS = [468, 469, 470, 471, 472];

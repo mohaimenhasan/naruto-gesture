@@ -1,4 +1,4 @@
-import { initVision, captureFrame, HandCapture, FaceCapture } from "./capture.js";
+import { initVision, HandCapture, FaceCapture } from "./capture.js";
 import { RasenganEffect } from "./rasengan.js";
 import { SharinganEffect } from "./sharingan.js";
 
@@ -96,20 +96,23 @@ function dist3d(a, b) {
 // ─── Main loop ─────────────────────────────────────────────────
 
 let lastTimestamp = 0;
+let processing = false;
 
 function loop(timestamp) {
   requestAnimationFrame(loop);
 
-  // Throttle to ~30 fps
   if (timestamp - lastTimestamp < 33) return;
   lastTimestamp = timestamp;
 
+  // Guard: skip if previous async detection is still running
+  if (processing) return;
+  processing = true;
+  processFrame().finally(() => { processing = false; });
+}
+
+async function processFrame() {
   const w = canvas.width;
   const h = canvas.height;
-  const now = performance.now();
-
-  // Capture video frame to intermediate canvas (avoids Video→WebGL issues)
-  const frame = captureFrame(video);
 
   // Draw mirrored video
   ctx.save();
@@ -120,7 +123,7 @@ function loop(timestamp) {
 
   // ── Face tracking + blink detection ──────────────────────
 
-  const faceResult = faceCapture.getEyePositions(frame, now);
+  const faceResult = await faceCapture.getEyePositions(video);
   let { leftEye, rightEye, eyesClosed } = faceResult;
 
   // Mirror the eye positions since we flipped the video
@@ -165,7 +168,7 @@ function loop(timestamp) {
 
   // ── Hand detection: open palm triggers Rasengan ──────────
 
-  const handResult = handCapture.detect(frame, now);
+  const handResult = await handCapture.detect(video);
   let palmDetected = false;
   let rasenganPos = null;
   let fingersOpen = 0;
