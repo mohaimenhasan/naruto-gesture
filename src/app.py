@@ -38,7 +38,7 @@ def main():
 
     # Blink detection state for Sharingan toggle
     eyes_closed_frames = 0
-    BLINK_HOLD_FRAMES = 60  # ~2 seconds at 30fps
+    BLINK_HOLD_FRAMES = 30  # ~1 second at 30fps
     eyes_were_held = False
     sharingan_cooldown = 0
     frame_count = 0
@@ -47,6 +47,10 @@ def main():
     calibration_ears = []
     CALIBRATION_FRAMES = 150  # ~5 seconds at 30fps
     calibrated = False
+
+    # Rasengan palm detection grace period
+    palm_lost_frames = 0
+    PALM_GRACE_FRAMES = 8
 
     print("\n=== NARUTO GESTURE ===")
     print("Show open palm → Rasengan (keeps growing!)")
@@ -113,44 +117,102 @@ def main():
 
         palm_detected = False
         rasengan_pos = None
+        fingers_open = 0
+        thumb_open = False
         if hand_results.hand_landmarks:
             h_lm = hand_results.hand_landmarks[0]
-            # Detect open palm: all fingertips above their base knuckles (y decreases upward)
-            # This naturally detects an open hand facing the camera
-            tips = [4, 8, 12, 16, 20]  # thumb, index, middle, ring, pinky tips
-            bases = [2, 5, 9, 13, 17]  # corresponding base joints
-            fingers_open = sum(1 for t, b in zip(tips[1:], bases[1:]) if h_lm[t].y < h_lm[b].y)
-            # Thumb: check x-distance (works for both hands)
-            thumb_open = abs(h_lm[4].x - h_lm[2].x) > 0.05
+            wrist = h_lm[0]
+
+            def dist3d(a, b):
+                return ((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2) ** 0.5
+
+            # Orientation-independent: finger is open if tip is farther
+            # from wrist than the DIP (second-to-last) joint
+            tip_ids = [8, 12, 16, 20]
+            dip_ids = [6, 10, 14, 18]
+            fingers_open = sum(
+                1 for t, d in zip(tip_ids, dip_ids)
+                if dist3d(h_lm[t], wrist) > dist3d(h_lm[d], wrist)
+            )
+            # Thumb: tip farther from wrist than IP joint
+            thumb_open = dist3d(h_lm[4], wrist) > dist3d(h_lm[3], wrist)
 
             if fingers_open >= 3 and thumb_open:
                 palm_detected = True
-                palm_x = (h_lm[0].x + h_lm[9].x + h_lm[5].x + h_lm[17].x) / 4
-                palm_y = (h_lm[0].y + h_lm[9].y + h_lm[5].y + h_lm[17].y) / 4
+                palm_x = (h_lm[9].x + h_lm[5].x + h_lm[17].x) / 3
+                palm_y = (h_lm[9].y + h_lm[5].y + h_lm[17].y) / 3
+                PALM_OFFSET_Y = -180
                 rasengan_pos = (
                     int(palm_x * screen_w),
-                    int(palm_y * screen_h),
+                    int(palm_y * screen_h) + PALM_OFFSET_Y,
                 )
 
-        if palm_detected:
+        if palm_detected and calibrated:
+            palm_lost_frames = 0
             if not rasengan_active:
                 rasengan.reset()
+                rasengan.alive = True
                 rasengan_active = True
+            if rasengan.fading:
+                rasengan.fading = False
             rasengan.update(rasengan_pos)
-            # Rasengan keeps expanding while palm is held
-            rasengan.base_radius = min(rasengan.base_radius + 0.5, 400)
         else:
             if rasengan_active:
-                rasengan_active = False
-                rasengan.base_radius = 150
-                rasengan.reset()
+                palm_lost_frames += 1
+                if palm_lost_frames >= PALM_GRACE_FRAMES and not rasengan.fading:
+                    rasengan.start_fading()
+                if rasengan.fading:
+                    rasengan.update()
+                if not rasengan.alive:
+                    rasengan_active = False
+                    rasengan.reset()
+                    palm_lost_frames = 0
 
         # --- Render ---
         rendered_frame = frame.copy()
 
+        # Debug overlay: draw hand detection info on camera feed
+        if hand_results.hand_landmarks:
+            h_lm = hand_results.hand_landmarks[0]
+            fh, fw = rendered_frame.shape[:2]
+            all_tips = [4, 8, 12, 16, 20]
+
+            # Draw landmarks
+            for i, lm in enumerate(h_lm):
+                px, py = int(lm.x * fw), int(lm.y * fh)
+                color = (0, 255, 0) if i in all_tips else (255, 255, 0)
+                cv2.circle(rendered_frame, (px, py), 4, color, -1)
+
+            # Draw palm center + rasengan target
+            palm_cx = int(((h_lm[9].x + h_lm[5].x + h_lm[17].x) / 3) * fw)
+            palm_cy = int(((h_lm[9].y + h_lm[5].y + h_lm[17].y) / 3) * fh)
+            cv2.circle(rendered_frame, (palm_cx, palm_cy), 8, (0, 0, 255), -1)
+            cv2.putText(rendered_frame, "PALM", (palm_cx + 10, palm_cy),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+
+            # Detection info text
+            det_text = f"Fingers: {fingers_open}/4  Thumb: {'Y' if thumb_open else 'N'}  Palm: {'YES' if palm_detected else 'NO'}"
+            cv2.putText(rendered_frame, det_text, (10, fh - 40),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            if rasengan_active:
+                ras_text = f"Rasengan r={rasengan.base_radius:.0f}  fading={rasengan.fading}  lost={palm_lost_frames}"
+                cv2.putText(rendered_frame, ras_text, (10, fh - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 200, 0), 2)
+        else:
+            fh = rendered_frame.shape[0]
+            cv2.putText(rendered_frame, "No hand detected", (10, fh - 40),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+        # Draw tracking outlines during calibration
+        if not calibrated:
+            hand_capture.draw_landmarks(rendered_frame, hand_results)
+            if left_eye is not None:
+                cv2.circle(rendered_frame, left_eye[0], left_eye[1], (0, 255, 255), 2)
+                cv2.circle(rendered_frame, right_eye[0], right_eye[1], (0, 255, 255), 2)
+
         # Sharingan eye overlay
         if sharingan_active and left_eye is not None:
-            rendered_frame = sharingan.render(rendered_frame, (left_eye, right_eye))
+            rendered_frame = sharingan.render(rendered_frame, (left_eye, right_eye), eyes_closed=eyes_closed)
 
         surface = cv2_frame_to_pygame(rendered_frame, (screen_w, screen_h))
         screen.blit(surface, (0, 0))
@@ -164,19 +226,24 @@ def main():
 
         # HUD
         hud_lines = []
+        if not calibrated:
+            pct = min(frame_count / CALIBRATION_FRAMES * 100, 100)
+            hud_lines.append(f"CALIBRATING: {pct:.0f}%")
         if eyes_closed and eyes_closed_frames > 0:
             progress = min(eyes_closed_frames / BLINK_HOLD_FRAMES * 100, 100)
             hud_lines.append(f"SHARINGAN CHARGING: {progress:.0f}%")
         if sharingan_active:
             hud_lines.append("SHARINGAN: ACTIVE")
         if rasengan_active:
-            size_pct = int((rasengan.base_radius / 400) * 100)
+            size_pct = int((rasengan.base_radius / RasenganEffect.MAX_RADIUS) * 100)
             hud_lines.append(f"RASENGAN: {size_pct}% POWER")
 
         if hud_lines:
             hud = np.zeros((35 * len(hud_lines) + 10, 500, 3), dtype=np.uint8)
             for i, line in enumerate(hud_lines):
-                if "CHARGING" in line:
+                if "CALIBRATING" in line:
+                    color = (0, 255, 255)
+                elif "CHARGING" in line:
                     color = (0, 165, 255)
                 elif "SHARINGAN" in line:
                     color = (0, 0, 255)

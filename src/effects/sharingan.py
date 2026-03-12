@@ -100,10 +100,16 @@ class SharinganEffect:
 
         return frame
 
-    def render(self, camera_frame, eye_data):
+    def render(self, camera_frame, eye_data, eyes_closed=False):
         """Render Sharingan on eyes. eye_data = ((left_center, left_r), (right_center, right_r))."""
         self.rotation_angle = (self.rotation_angle + 2) % 360
-        self.activation_alpha = min(self.activation_alpha + 0.05, 1.0)
+        if eyes_closed:
+            self.activation_alpha = max(self.activation_alpha - 0.10, 0.0)
+        else:
+            self.activation_alpha = min(self.activation_alpha + 0.05, 1.0)
+
+        if self.activation_alpha == 0.0:
+            return camera_frame
 
         frame = camera_frame.copy()
 
