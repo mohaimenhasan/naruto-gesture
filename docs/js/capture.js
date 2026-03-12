@@ -1,92 +1,141 @@
-// Uses the legacy MediaPipe Solution API (global Hands / FaceMesh) loaded
-// via <script> tags in index.html.  These manage their own WebGL context
-// reliably, unlike the newer Tasks-Vision WASM bundle.
+// MediaPipe Tasks Vision API — single shared WASM/WebGL instance for both
+// hand and face detection.  Frames are captured to an intermediate canvas
+// before being passed to MediaPipe so the video element itself never touches
+// WebGL (avoids driver-level texture-upload bugs).
+
+import { FilesetResolver, HandLandmarker, FaceLandmarker } from
+  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+const WASM_PATH =
+  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
+const NO_FACE = { leftEye: null, rightEye: null, eyesClosed: false };
+
+// Shared vision fileset — one WASM module, one WebGL context
+let _vision = null;
+
+export async function initVision(onStatus) {
+  // Verify WebGL2 works before loading heavy models
+  const testCanvas = document.createElement("canvas");
+  const gl = testCanvas.getContext("webgl2") || testCanvas.getContext("webgl");
+  if (!gl) {
+    throw new Error(
+      "WebGL is not available in this browser. Please use a recent version of Chrome, Edge, or Firefox on desktop."
+    );
+  }
+  testCanvas.remove();
+
+  onStatus?.("Downloading MediaPipe WASM runtime…");
+  _vision = await FilesetResolver.forVisionTasks(WASM_PATH);
+  return _vision;
+}
+
+// ─── Temp canvas for frame capture ─────────────────────────────
+// Drawing the video to a plain 2D canvas first, then handing that canvas
+// to MediaPipe avoids the problematic HTMLVideoElement → WebGL texture path
+// that crashes on some browsers/drivers.
+
+let _tmpCanvas = null;
+let _tmpCtx = null;
+
+export function captureFrame(video) {
+  if (!_tmpCanvas) {
+    _tmpCanvas = document.createElement("canvas");
+    _tmpCtx = _tmpCanvas.getContext("2d");
+  }
+  if (_tmpCanvas.width !== video.videoWidth || _tmpCanvas.height !== video.videoHeight) {
+    _tmpCanvas.width = video.videoWidth;
+    _tmpCanvas.height = video.videoHeight;
+  }
+  _tmpCtx.drawImage(video, 0, 0);
+  return _tmpCanvas;
+}
+
+// ─── Hand capture ──────────────────────────────────────────────
 
 export class HandCapture {
   constructor() {
-    this._hands = null;
-    this._latestResult = null;
-    this._ready = false;
+    this.landmarker = null;
+    this._lastTs = -1;
   }
 
-  async init() {
-    // eslint-disable-next-line no-undef
-    this._hands = new Hands({
-      locateFile: (file) =>
-        `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`,
-    });
-    this._hands.setOptions({
-      maxNumHands: 1,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.7,
+  async init(onStatus) {
+    onStatus?.("Loading hand detection model…");
+    this.landmarker = await HandLandmarker.createFromOptions(_vision, {
+      baseOptions: {
+        modelAssetPath:
+          "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
+        delegate: "GPU",
+      },
+      runningMode: "VIDEO",
+      numHands: 1,
+      minHandDetectionConfidence: 0.7,
       minTrackingConfidence: 0.5,
     });
-    this._hands.onResults((r) => { this._latestResult = r; });
-    await this._hands.initialize();
-    this._ready = true;
-    console.log("HandCapture ready (legacy Solution API)");
+    console.log("HandLandmarker ready");
   }
 
-  async detect(video) {
-    if (!this._ready) return null;
+  detect(frameCanvas, timestampMs) {
+    if (!this.landmarker) return null;
+    const ts = Math.max(Math.round(timestampMs), this._lastTs + 1);
+    this._lastTs = ts;
     try {
-      await this._hands.send({ image: video });
+      return this.landmarker.detectForVideo(frameCanvas, ts);
     } catch (e) {
-      console.warn("Hand detection frame error:", e);
+      console.warn("Hand detection error:", e);
       return null;
     }
-    return this._latestResult;
   }
 }
 
+// ─── Face capture ──────────────────────────────────────────────
+
 export class FaceCapture {
   constructor() {
-    this._mesh = null;
-    this._latestResult = null;
-    this._ready = false;
+    this.landmarker = null;
     this.earThreshold = 0.30;
     this._lastEar = 0;
+    this._lastTs = -1;
   }
 
-  async init() {
-    // eslint-disable-next-line no-undef
-    this._mesh = new FaceMesh({
-      locateFile: (file) =>
-        `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/${file}`,
-    });
-    this._mesh.setOptions({
-      maxNumFaces: 1,
-      refineLandmarks: true,   // enables iris landmarks 468-477
-      minDetectionConfidence: 0.7,
+  async init(onStatus) {
+    onStatus?.("Loading face detection model…");
+    this.landmarker = await FaceLandmarker.createFromOptions(_vision, {
+      baseOptions: {
+        modelAssetPath:
+          "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task",
+        delegate: "GPU",
+      },
+      runningMode: "VIDEO",
+      numFaces: 1,
+      minFaceDetectionConfidence: 0.7,
       minTrackingConfidence: 0.5,
     });
-    this._mesh.onResults((r) => { this._latestResult = r; });
-    await this._mesh.initialize();
-    this._ready = true;
-    console.log("FaceCapture ready (legacy Solution API)");
+    console.log("FaceLandmarker ready");
   }
 
-  async getEyePositions(video) {
-    const NO_FACE = { leftEye: null, rightEye: null, eyesClosed: false };
-    if (!this._ready) return NO_FACE;
+  getEyePositions(frameCanvas, timestampMs) {
+    if (!this.landmarker) return NO_FACE;
 
+    const ts = Math.max(Math.round(timestampMs), this._lastTs + 1);
+    this._lastTs = ts;
+
+    let result;
     try {
-      await this._mesh.send({ image: video });
+      result = this.landmarker.detectForVideo(frameCanvas, ts);
     } catch (e) {
-      console.warn("Face detection frame error:", e);
+      console.warn("Face detection error:", e);
       return NO_FACE;
     }
 
-    const result = this._latestResult;
-    if (!result || !result.multiFaceLandmarks || result.multiFaceLandmarks.length === 0) {
+    if (!result.faceLandmarks || result.faceLandmarks.length === 0) {
       return NO_FACE;
     }
 
-    const face = result.multiFaceLandmarks[0];
-    const w = video.videoWidth;
-    const h = video.videoHeight;
+    const face = result.faceLandmarks[0];
+    const w = frameCanvas.width;
+    const h = frameCanvas.height;
 
-    // EAR (Eye Aspect Ratio) for blink detection — mirrors Python exactly
+    // EAR (Eye Aspect Ratio) for blink detection
     const earMulti = (upper, lower, corners) => {
       let vertSum = 0;
       for (let i = 0; i < upper.length; i++) {
@@ -107,7 +156,6 @@ export class FaceCapture {
     this._lastEar = avgEar;
     const eyesClosed = avgEar < this.earThreshold;
 
-    // Iris centers (landmarks 468-472 left, 473-477 right)
     const eyeCenter = (indices) => {
       let sx = 0, sy = 0;
       for (const i of indices) {

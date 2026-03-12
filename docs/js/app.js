@@ -1,4 +1,4 @@
-import { HandCapture, FaceCapture } from "./capture.js";
+import { initVision, captureFrame, HandCapture, FaceCapture } from "./capture.js";
 import { RasenganEffect } from "./rasengan.js";
 import { SharinganEffect } from "./sharingan.js";
 
@@ -36,19 +36,21 @@ const PALM_GRACE_FRAMES = 8;
 // ─── Initialization ────────────────────────────────────────────
 
 async function init() {
-  loadingStatus.textContent = "Loading hand detection model…";
+  const setStatus = (msg) => { loadingStatus.textContent = msg; };
+
+  await initVision(setStatus);
+
   handCapture = new HandCapture();
-  await handCapture.init();
+  await handCapture.init(setStatus);
 
-  loadingStatus.textContent = "Loading face detection model…";
   faceCapture = new FaceCapture();
-  await faceCapture.init();
+  await faceCapture.init(setStatus);
 
-  loadingStatus.textContent = "Loading assets…";
-  sharingan = new SharinganEffect(1, 1); // resized on camera start
+  setStatus("Loading assets…");
+  sharingan = new SharinganEffect(1, 1);
   await sharingan.loadImage("assets/sharingan.png");
 
-  loadingStatus.textContent = "Ready! Click to start.";
+  setStatus("Ready! Click to start.");
   document.querySelector(".spinner").style.display = "none";
   startBtn.style.display = "inline-block";
   startBtn.addEventListener("click", startCamera);
@@ -94,7 +96,6 @@ function dist3d(a, b) {
 // ─── Main loop ─────────────────────────────────────────────────
 
 let lastTimestamp = 0;
-let processing = false;
 
 function loop(timestamp) {
   requestAnimationFrame(loop);
@@ -103,15 +104,12 @@ function loop(timestamp) {
   if (timestamp - lastTimestamp < 33) return;
   lastTimestamp = timestamp;
 
-  // Skip if previous frame is still processing (async detection)
-  if (processing) return;
-  processing = true;
-  processFrame().finally(() => { processing = false; });
-}
-
-async function processFrame() {
   const w = canvas.width;
   const h = canvas.height;
+  const now = performance.now();
+
+  // Capture video frame to intermediate canvas (avoids Video→WebGL issues)
+  const frame = captureFrame(video);
 
   // Draw mirrored video
   ctx.save();
@@ -122,7 +120,7 @@ async function processFrame() {
 
   // ── Face tracking + blink detection ──────────────────────
 
-  const faceResult = await faceCapture.getEyePositions(video);
+  const faceResult = faceCapture.getEyePositions(frame, now);
   let { leftEye, rightEye, eyesClosed } = faceResult;
 
   // Mirror the eye positions since we flipped the video
@@ -167,15 +165,14 @@ async function processFrame() {
 
   // ── Hand detection: open palm triggers Rasengan ──────────
 
-  const handResult = await handCapture.detect(video);
+  const handResult = handCapture.detect(frame, now);
   let palmDetected = false;
   let rasenganPos = null;
   let fingersOpen = 0;
   let thumbOpen = false;
 
-  const handLandmarks = handResult && handResult.multiHandLandmarks;
-  if (handLandmarks && handLandmarks.length > 0) {
-    const lm = handLandmarks[0]; // array of {x, y, z}
+  if (handResult && handResult.landmarks && handResult.landmarks.length > 0) {
+    const lm = handResult.landmarks[0]; // array of {x, y, z}
     const wrist = lm[0];
 
     const tipIds = [8, 12, 16, 20];
