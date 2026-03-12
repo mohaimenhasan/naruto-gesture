@@ -1,6 +1,6 @@
 # Naruto Gesture Recognition
 
-Perform Naruto jutsu with your webcam! Open your palm to build a Rasengan, close your eyes to activate Sharingan.
+Perform Naruto jutsu with your webcam! Open your palm to summon a Rasengan, close your eyes to activate Sharingan.
 
 ## Setup
 
@@ -16,9 +16,13 @@ pip install -r requirements.txt
 python -m src.app
 ```
 
-- **Open palm** → Rasengan builds on your hand (keeps growing while held!)
-- **Close eyes 2s+ then reopen** → Toggles Sharingan on your eyes
-- Both can be active simultaneously
-- Press **Q** or **ESC** to quit
+The app auto-calibrates during the first ~5 seconds — just look at the camera naturally.
 
-Blink detection auto-calibrates during the first 5 seconds — just use it naturally.
+### Jutsus
+
+| Gesture | Effect |
+|---------|--------|
+| **Open palm** | Rasengan appears above your hand — grows while held, shrinks and fades when you lower it |
+| **Close eyes ~1 s then reopen** | Toggles Sharingan overlay on your eyes |
+
+Both effects can be active simultaneously. Press **Q** or **ESC** to quit.
