@@ -68,7 +68,9 @@ export class HandCapture {
   async detect(video) {
     if (!this._detector) return null;
     const tf = window.tf;
-    const input = tf.browser.fromPixels(video).toFloat();
+    const raw = tf.browser.fromPixels(video);
+    const input = raw.toFloat();
+    raw.dispose();
     try {
       const hands = await this._detector.estimateHands(input, { flipHorizontal: false });
       if (!hands || hands.length === 0) return null;
@@ -111,7 +113,9 @@ export class FaceCapture {
   async getEyePositions(video) {
     if (!this._detector) return NO_FACE;
     const tf = window.tf;
-    const input = tf.browser.fromPixels(video).toFloat();
+    const raw = tf.browser.fromPixels(video);
+    const input = raw.toFloat();
+    raw.dispose();
     let faces;
     try {
       faces = await this._detector.estimateFaces(input, { flipHorizontal: false });
