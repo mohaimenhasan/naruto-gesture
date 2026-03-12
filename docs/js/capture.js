@@ -105,9 +105,12 @@ export class FaceCapture {
     const fld = window.faceLandmarksDetection;
     this._detector = await fld.createDetector(
       fld.SupportedModels.MediaPipeFaceMesh,
-      { runtime: "tfjs", maxFaces: 1, refineLandmarks: true }
+      // refineLandmarks: false avoids the iris attention model which uses
+      // BatchMatMul on non-float32 tensors (unsupported by WASM backend).
+      // Eye positions are computed from the base 468 contour landmarks instead.
+      { runtime: "tfjs", maxFaces: 1, refineLandmarks: false }
     );
-    console.log("Face detector ready (TF.js WASM)");
+    console.log("Face detector ready (TF.js, no iris refinement)");
   }
 
   async getEyePositions(video) {
@@ -127,10 +130,9 @@ export class FaceCapture {
     }
     if (!faces || faces.length === 0) return NO_FACE;
 
-    // TF.js keypoints are in pixel coordinates
     const face = faces[0].keypoints;
 
-    // EAR (Eye Aspect Ratio) — ratio is scale-invariant
+    // EAR (Eye Aspect Ratio) — uses base mesh landmarks (all in 0-467)
     const earMulti = (upper, lower, corners) => {
       let vertSum = 0;
       for (let i = 0; i < upper.length; i++) {
@@ -151,32 +153,27 @@ export class FaceCapture {
     this._lastEar = avgEar;
     const eyesClosed = avgEar < this.earThreshold;
 
-    // Eye centers — already in pixel coords from TF.js
+    // Eye centers from contour landmarks (no iris model needed)
+    // Left eye: corners 33 (inner), 133 (outer), top 159, bottom 145
+    // Right eye: corners 362 (inner), 263 (outer), top 386, bottom 374
     const eyeCenter = (indices) => {
       let sx = 0, sy = 0;
       for (const i of indices) { sx += face[i].x; sy += face[i].y; }
       return [Math.round(sx / indices.length), Math.round(sy / indices.length)];
     };
 
-    const irisRadius = (indices) => {
-      let cx = 0, cy = 0;
-      for (const i of indices) { cx += face[i].x; cy += face[i].y; }
-      cx /= indices.length;
-      cy /= indices.length;
-      let maxDist = 0;
-      for (const i of indices) {
-        const dx = face[i].x - cx, dy = face[i].y - cy;
-        maxDist = Math.max(maxDist, Math.sqrt(dx * dx + dy * dy));
-      }
-      return Math.round(maxDist * 1.2);
+    const eyeRadius = (inner, outer) => {
+      const dx = face[inner].x - face[outer].x;
+      const dy = face[inner].y - face[outer].y;
+      return Math.round(Math.sqrt(dx * dx + dy * dy) / 3.5);
     };
 
-    const LEFT_IRIS = [468, 469, 470, 471, 472];
-    const RIGHT_IRIS = [473, 474, 475, 476, 477];
+    const LEFT_EYE = [33, 133, 159, 145, 160, 144, 161, 153];
+    const RIGHT_EYE = [362, 263, 386, 374, 385, 373, 384, 380];
 
     return {
-      leftEye: { center: eyeCenter(LEFT_IRIS), radius: irisRadius(LEFT_IRIS) },
-      rightEye: { center: eyeCenter(RIGHT_IRIS), radius: irisRadius(RIGHT_IRIS) },
+      leftEye: { center: eyeCenter(LEFT_EYE), radius: eyeRadius(33, 133) },
+      rightEye: { center: eyeCenter(RIGHT_EYE), radius: eyeRadius(362, 263) },
       eyesClosed,
     };
   }
