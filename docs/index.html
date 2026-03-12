@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Naruto Gesture</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <!-- Loading / permission screen -->
+  <div id="loading-screen">
+    <div class="loader-content">
+      <h1>🍥 Naruto Gesture</h1>
+      <p id="loading-status">Loading MediaPipe models…</p>
+      <div class="spinner"></div>
+      <button id="start-btn" style="display:none">Start Camera</button>
+    </div>
+  </div>
+
+  <!-- Main app -->
+  <video id="webcam" autoplay playsinline></video>
+  <canvas id="canvas"></canvas>
+
+  <!-- HUD overlay -->
+  <div id="hud"></div>
+
+  <!-- Instructions toast -->
+  <div id="instructions">
+    <p><strong>👋 Open palm</strong> → Rasengan</p>
+    <p><strong>😑 Close eyes 1s+</strong> → Toggle Sharingan</p>
+    <p><strong>ESC</strong> → Quit</p>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
