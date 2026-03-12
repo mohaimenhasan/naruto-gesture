@@ -126,7 +126,7 @@ def run_battle_mode():
 
     print("\n=== BATTLE MODE ===")
     print("Perform gestures to activate jutsus!")
-    print("Close eyes 3s + reopen → toggle Sharingan")
+    print("Close eyes 2s+ then reopen → toggle Sharingan")
     print("Press [Q] or [ESC] to quit\n")
 
     running = True
