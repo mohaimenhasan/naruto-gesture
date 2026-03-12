@@ -58,6 +58,8 @@ def run_training_mode():
         cv2.imshow("Naruto Gesture Training", frame)
 
         key = cv2.waitKey(1) & 0xFF
+        if key != 255:
+            key = ord(chr(key).lower()) if key < 128 else key
         if key == ord("q"):
             break
         elif key in GESTURE_KEYS and hands_data:
