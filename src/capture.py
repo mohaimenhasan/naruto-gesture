@@ -86,6 +86,9 @@ class FaceCapture:
         )
         self.landmarker = vision.FaceLandmarker.create_from_options(options)
         self._frame_ts = 0
+        self._last_ear = 0.0
+        self._num_landmarks = 0
+        self.ear_threshold = 0.30  # default, overridden by calibration
 
     def get_eye_positions(self, frame):
         """Get left and right eye center positions in pixel coordinates.
@@ -120,7 +123,7 @@ class FaceCapture:
         left_ear = ear_multi([159, 160, 161], [144, 145, 153], [33, 133])
         right_ear = ear_multi([386, 385, 384], [373, 374, 380], [263, 362])
         avg_ear = (left_ear + right_ear) / 2
-        eyes_closed = avg_ear < 0.15
+        eyes_closed = avg_ear < self.ear_threshold
 
         # Store EAR for debug access
         self._last_ear = avg_ear
