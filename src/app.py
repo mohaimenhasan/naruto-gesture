@@ -184,11 +184,11 @@ def run_battle_mode():
 
             # Get hand position for effect centering
             hand_pos = None
-            if hand_results.multi_hand_landmarks:
-                h_lm = hand_results.multi_hand_landmarks[0]
+            if hand_results.hand_landmarks:
+                h_lm = hand_results.hand_landmarks[0]
                 hand_pos = (
-                    int(h_lm.landmark[9].x * screen_w),
-                    int(h_lm.landmark[9].y * screen_h),
+                    int(h_lm[9].x * screen_w),
+                    int(h_lm[9].y * screen_h),
                 )
 
             if active_jutsu == "chidori":

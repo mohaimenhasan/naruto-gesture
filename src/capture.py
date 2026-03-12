@@ -52,12 +52,6 @@ class HandCapture:
         hand_connections = mp.tasks.vision.HandLandmarksConnections.HAND_CONNECTIONS
 
         if result.hand_landmarks:
-            for hand_landmarks in result.hand_landmarks:
-                # Convert to NormalizedLandmarkList proto for drawing
-                proto = mp.tasks.vision.HandLandmarker.result_to_proto(result)
-                break
-
-            # Draw manually using cv2
             h, w = frame.shape[:2]
             for hand_landmarks in result.hand_landmarks:
                 points = []
